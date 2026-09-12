@@ -236,10 +236,6 @@ pixelmind/
 
 ---
 
-## 📸 Screenshots
-
-> _Screenshots coming soon._ Add images to `docs/screenshots/` and uncomment the lines below.
-
 <!--
 ### Main Studio
 ![Main studio view](docs/screenshots/studio.png)
