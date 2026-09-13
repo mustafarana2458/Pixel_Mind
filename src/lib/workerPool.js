@@ -35,12 +35,12 @@ class WorkerPool {
     });
   }
 
-  /** Uploads a copy of the image to every worker under `key`. */
-  setSource(key, imageData) {
+  /** Uploads a copy of the image to every worker under `key`, tagged with the source version it belongs to. */
+  setSource(key, imageData, version) {
     return Promise.all(
       this.workers.map((_, i) => {
         const copy = new Uint8ClampedArray(imageData.data);
-        return this.post(i, { type: 'source', key, width: imageData.width, height: imageData.height, buffer: copy.buffer }, [copy.buffer]);
+        return this.post(i, { type: 'source', key, version, width: imageData.width, height: imageData.height, buffer: copy.buffer }, [copy.buffer]);
       }),
     );
   }

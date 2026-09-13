@@ -33,6 +33,8 @@ function GridCell({ index, filterId, request }) {
       scale: images.grid.width / images.original.width,
     }).then((res) => {
       if (!res || !alive || !canvasRef.current) return;
+      // Rendered from a different image than the one on screen; the sourceVersion change re-runs this effect.
+      if (res.sourceVersion !== useStudio.getState().sourceVersion) return;
       imageDataToCanvas(new ImageData(new Uint8ClampedArray(res.buffer), res.width, res.height), canvasRef.current);
       setMs(res.ms);
       setBusy(false);

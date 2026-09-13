@@ -9,11 +9,11 @@ let stamp = 0;
 /** Cache of the last filtered (pre-adjustment) result, so dragging an adjustment slider skips the filters. */
 let cache = { sig: null, data: null };
 
-function finish(id, width, height, out, withHistogram, t0) {
+function finish(id, width, height, out, withHistogram, t0, sourceVersion) {
   const hist = withHistogram ? computeHistogram(out) : null;
   const transfer = [out.buffer];
   if (hist) transfer.push(hist.r.buffer, hist.g.buffer, hist.b.buffer, hist.l.buffer);
-  self.postMessage({ id, ok: true, width, height, buffer: out.buffer, hist, ms: performance.now() - t0 }, transfer);
+  self.postMessage({ id, ok: true, width, height, buffer: out.buffer, hist, sourceVersion, ms: performance.now() - t0 }, transfer);
 }
 
 self.onmessage = (e) => {
@@ -22,8 +22,10 @@ self.onmessage = (e) => {
   try {
     switch (msg.type) {
       case 'source': {
-        sources.set(msg.key, { data: new Uint8ClampedArray(msg.buffer), width: msg.width, height: msg.height, stamp: ++stamp });
-        self.postMessage({ id: msg.id, ok: true });
+        sources.set(msg.key, { data: new Uint8ClampedArray(msg.buffer), width: msg.width, height: msg.height, version: msg.version, stamp: ++stamp });
+        // A new image invalidates the cached filter result — drop it so old pixels are never served or kept alive.
+        cache = { sig: null, data: null };
+        self.postMessage({ id: msg.id, ok: true, sourceVersion: msg.version });
         break;
       }
       case 'run': {
@@ -39,7 +41,7 @@ self.onmessage = (e) => {
         }
         const out = filtered.slice();
         if (msg.adjustments && !isNeutral(msg.adjustments)) applyAdjustments(out, msg.adjustments);
-        finish(msg.id, s.width, s.height, out, msg.histogram, t0);
+        finish(msg.id, s.width, s.height, out, msg.histogram, t0, s.version);
         break;
       }
       case 'process': {
@@ -55,7 +57,7 @@ self.onmessage = (e) => {
         if (!s) throw new Error(`No source "${msg.key}" loaded`);
         const results = msg.filterIds.map((fid) => ({ id: fid, buffer: applyFilter(fid, s.data, s.width, s.height, {}).buffer }));
         self.postMessage(
-          { id: msg.id, ok: true, width: s.width, height: s.height, results },
+          { id: msg.id, ok: true, width: s.width, height: s.height, sourceVersion: s.version, results },
           results.map((r) => r.buffer),
         );
         break;

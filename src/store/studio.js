@@ -15,6 +15,14 @@ export const LAB_DEFAULT = { size: 3, kernel: [0, -1, 0, -1, 5, -1, 0, -1, 0], d
 
 const initialSteps = [makeStep('unsharpMask'), makeStep('vignette')];
 
+/** Empty pipeline, neutral adjustments and a default Kernel Lab — applied whenever a new image replaces the current one. */
+export const freshPipelineState = () => ({
+  steps: [],
+  selectedStepId: null,
+  adjustments: { ...DEFAULT_ADJUSTMENTS },
+  lab: { ...LAB_DEFAULT, live: true },
+});
+
 let toastTimer = 0;
 
 export const useStudio = create((set, get) => ({

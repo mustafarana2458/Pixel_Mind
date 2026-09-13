@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useStudio, images, effectiveSteps } from './studio.js';
+import { useStudio, images, effectiveSteps, freshPipelineState } from './studio.js';
 import { pool, createLatestChannel } from '../lib/workerPool.js';
 import { FILTERS } from '../lib/filters.js';
 import { computeHistogram } from '../lib/histogram.js';
@@ -18,7 +18,16 @@ import {
 export const SAMPLE_URL = '/map-background.png';
 const SAMPLE_NAME = 'Map Background.png';
 
-export async function ingestBlob(blob, name) {
+/**
+ * Monotonic id of the most recent load. It doubles as the store's `sourceVersion` and tags every
+ * source uploaded to the workers, so a slower, older load can never overwrite a newer one and a
+ * render of one image can never be shown against another.
+ */
+let loadToken = 0;
+
+export async function ingestBlob(blob, name, { keepPipeline = false } = {}) {
+  const token = ++loadToken;
+  const isCurrent = () => token === loadToken;
   const hadSource = !!useStudio.getState().source;
   if (!hadSource) useStudio.setState({ status: 'loading', error: null });
   try {
@@ -31,11 +40,14 @@ export async function ingestBlob(blob, name) {
     const grid = toImageData(bitmap, GRID_MAX);
     const icon = toImageData(bitmap, ICON_MAX);
     bitmap.close?.();
+    if (!isCurrent()) return;
 
-    await Promise.all([pool.setSource('preview', preview), pool.setSource('grid', grid), pool.setSource('icon', icon)]);
+    await Promise.all([pool.setSource('preview', preview, token), pool.setSource('grid', grid, token), pool.setSource('icon', icon, token)]);
+    if (!isCurrent()) return;
     Object.assign(images, { full, original: preview, grid, icon, processed: null });
 
-    useStudio.setState((s) => ({
+    useStudio.setState(() => ({
+      ...(keepPipeline ? {} : freshPipelineState()),
       source: {
         name,
         size: blob.size,
@@ -46,9 +58,11 @@ export async function ingestBlob(blob, name) {
         originalWidth,
         originalHeight,
       },
-      sourceVersion: s.sourceVersion + 1,
+      sourceVersion: token,
       status: 'ready',
       error: null,
+      histogram: null,
+      lastMs: null,
       hover: null,
       pinned: { x: preview.width >> 1, y: preview.height >> 1 },
       originalHistogram: computeHistogram(preview.data),
@@ -58,6 +72,7 @@ export async function ingestBlob(blob, name) {
     generateThumbs();
   } catch (err) {
     console.error(err);
+    if (!isCurrent()) return;
     const message = err?.message || 'Could not load that image.';
     if (hadSource) useStudio.getState().notify(message, 'error');
     else useStudio.setState({ status: 'error', error: message });
@@ -75,11 +90,11 @@ export function openFilePicker() {
   input.click();
 }
 
-export async function loadSample() {
+export async function loadSample({ keepPipeline = false } = {}) {
   try {
     const res = await fetch(SAMPLE_URL);
     if (!res.ok) throw new Error(`Sample image missing (${res.status})`);
-    await ingestBlob(await res.blob(), SAMPLE_NAME);
+    await ingestBlob(await res.blob(), SAMPLE_NAME, { keepPipeline });
   } catch (err) {
     useStudio.setState({ status: 'error', error: err.message });
   }
@@ -89,6 +104,7 @@ async function generateThumbs() {
   const ids = FILTERS.filter((f) => !f.hidden).map((f) => f.id);
   try {
     const res = await pool.post(pool.auxIndex, { type: 'thumbs', key: 'icon', filterIds: ids });
+    if (res.sourceVersion !== useStudio.getState().sourceVersion) return;
     const canvas = document.createElement('canvas');
     const thumbs = {};
     for (const r of res.results) {
@@ -157,7 +173,8 @@ export function useProcessingEngine() {
     // StrictMode mounts effects twice in development; load the sample only once.
     if (sampleRequested) return;
     sampleRequested = true;
-    loadSample();
+    // The first-run sample keeps the demo pipeline; every later image starts from a clean one.
+    loadSample({ keepPipeline: true });
   }, []);
 
   useEffect(() => {
@@ -177,6 +194,9 @@ export function useProcessingEngine() {
         useStudio.setState({ processing: true });
         const res = await request({ type: 'run', key: 'preview', steps, adjustments: st.adjustments, histogram: true, cache: true });
         if (!res) return;
+        // The worker rendered a different image than the one on screen (a new upload landed mid-render).
+        // Discard it; the sourceVersion change schedules a fresh render of the current image.
+        if (res.sourceVersion !== useStudio.getState().sourceVersion) return;
         images.processed = new ImageData(new Uint8ClampedArray(res.buffer), res.width, res.height);
         useStudio.setState((s) => ({
           processedVersion: s.processedVersion + 1,
